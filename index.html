@@ -87,115 +87,138 @@
   <div class="container">
     <h1>Генератор изображений</h1>
 
-    <!-- Строка ввода -->
     <input id="promptInput" type="text" placeholder="Что рисуем сегодня?" />
-
-    <!-- Кнопка запуска -->
     <button id="generateBtn">Нарисовать</button>
 
-    <!-- Этапы -->
     <div class="stages">
-      <div id="stage1" class="stage">1. Промпт</div>
-      <div id="stage2" class="stage">2. Sora</div>
-      <div id="stage3" class="stage">3. Результат</div>
+      <div id="stage0" class="stage">1. Промпт</div>
+      <div id="stage1" class="stage">2. Sora</div>
+      <div id="stage2" class="stage">3. Результат</div>
     </div>
 
-    <!-- Вывод изображения -->
     <div class="result" id="result"></div>
   </div>
 
   <script>
-    // Замените на свои ключи
+    // ===========================
+    // Настройки — замените ключи:
+    // ===========================
     const GEMINI_API_KEY = 'AIzaSyBjCMFPAv1QX5ewcb0m08Pjh4Mdn6MV9i8';
     const SORA_API_KEY   = 'sk-bCREbtCgwOgFPHxdFd4c7a9910A140438507D1C51401827c';
+    const GEMINI_URL     = 'https://generativelanguage.googleapis.com/v1beta2/models/gemini-2.0-flash:generateText';
     const SORA_URL       = 'https://api.laozhang.ai/v1/chat/completions';
 
-    const promptInput  = document.getElementById('promptInput');
-    const generateBtn  = document.getElementById('generateBtn');
-    const resultDiv    = document.getElementById('result');
-    const stages       = [
+    const promptInput = document.getElementById('promptInput');
+    const generateBtn = document.getElementById('generateBtn');
+    const resultDiv   = document.getElementById('result');
+    const stagesEls   = [
+      document.getElementById('stage0'),
       document.getElementById('stage1'),
-      document.getElementById('stage2'),
-      document.getElementById('stage3')
+      document.getElementById('stage2')
     ];
 
     function setActiveStage(idx) {
-      stages.forEach((el, i) => el.classList.toggle('active', i === idx));
+      stagesEls.forEach((el, i) => el.classList.toggle('active', i === idx));
     }
 
-    // Собираем промпт через Google Gemini
-    async function getBestPrompt(userInput) {
+    // fetch с таймаутом
+    async function fetchWithTimeout(url, options = {}, timeout = 30000) {
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), timeout);
+      try {
+        return await fetch(url, { ...options, signal: controller.signal });
+      } finally {
+        clearTimeout(id);
+      }
+    }
+
+    // 1. Получаем «прокачанный» промпт от Gemini
+    async function getBestPrompt(text) {
       setActiveStage(0);
-      const url = `https://generativelanguage.googleapis.com/v1beta2/models/gemini-2.0-flash:generateText?key=${GEMINI_API_KEY}`;
-      const body = {
-        prompt: { text:
-          "Напиши очень подробный промпт для Sora, кроме промпта не должно быть лишних слов. " +
-          "Задача нарисовать картинку в лучшем виде, не придумывать многое лишнего, " +
-          "главная задача сохранить исходную идею. Ниже запрос пользователя, ответ на английском языке:\n" +
-          userInput
+      const res = await fetchWithTimeout(
+        `${GEMINI_URL}?key=${GEMINI_API_KEY}`,
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt: {
+              text:
+                'Напиши очень подробный промпт для Sora без лишних слов. ' +
+                'Главная задача — сохранить идею и улучшить описание. ' +
+                'Ответ на английском языке.\n' +
+                text
+            }
+          })
         }
-      };
-      const res  = await fetch(url, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(body)
-      });
-      const data = await res.json();
-      return data.candidates?.[0]?.output || '';
+      );
+      if (!res.ok) {
+        const err = await res.text().catch(() => res.status);
+        throw new Error(`Gemini вернул ${res.status}: ${err}`);
+      }
+      const json = await res.json();
+      return json.candidates?.[0]?.output || '';
     }
 
-    // Отправляем полученный промпт в Sora и вытаскиваем URL картинки
-    async function getImageFromSora(bestPrompt) {
+    // 2. Отправляем промпт в Sora и парсим URL картинки
+    async function getImageFromSora(prompt) {
       setActiveStage(1);
-      const payload = {
-        model: 'sora-image',
-        stream: false,
-        messages: [
-          { role: 'system', content: 'You are a helpful assistant.' },
-          { role: 'user',   content: bestPrompt }
-        ]
-      };
-      const res  = await fetch(SORA_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${SORA_API_KEY}`
-        },
-        body: JSON.stringify(payload)
-      });
-      const data    = await res.json();
+      const res = await fetchWithTimeout(
+        SORA_URL,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${SORA_API_KEY}`
+          },
+          body: JSON.stringify({
+            model: 'sora-image',
+            stream: false,
+            messages: [
+              { role: 'system', content: 'You are a helpful assistant.' },
+              { role: 'user',   content: prompt }
+            ]
+          })
+        }
+      );
+      if (!res.ok) {
+        const err = await res.text().catch(() => res.status);
+        throw new Error(`Sora вернул ${res.status}: ${err}`);
+      }
+      const data = await res.json();
       const content = data.choices?.[0]?.message?.content || '';
-      // Ищем URL внутри круглых скобок
-      const regex = /\((https?:\/\/[^\s)]+)\)/g;
-      let urls = [], m;
-      while ((m = regex.exec(content)) !== null) {
-        urls.push(m[1]);
+      // Ищем все URL в скобках
+      const urls = [];
+      for (const match of content.matchAll(/\((https?:\/\/[^\s)]+)\)/g)) {
+        urls.push(match[1]);
       }
       return urls;
     }
 
     // Обработчик кнопки
     generateBtn.addEventListener('click', async () => {
-      const userInput = promptInput.value.trim();
-      if (!userInput) return;
+      const userText = promptInput.value.trim();
+      if (!userText) return;
+
       generateBtn.disabled = true;
       resultDiv.innerHTML = '';
       try {
-        const prompt = await getBestPrompt(userInput);
-        const urls   = await getImageFromSora(prompt);
+        const bestPrompt = await getBestPrompt(userText);
+        const imgs = await getImageFromSora(bestPrompt);
         setActiveStage(2);
-        if (urls.length) {
-          urls.forEach(u => {
+
+        if (imgs.length) {
+          imgs.forEach(src => {
             const img = document.createElement('img');
-            img.src = u;
+            img.src = src;
             resultDiv.appendChild(img);
           });
         } else {
-          resultDiv.textContent = 'Изображение не найдено.';
+          resultDiv.textContent = 'Картинка не найдена.';
         }
-      } catch (e) {
-        console.error(e);
-        resultDiv.textContent = 'Ошибка при генерации.';
+      } catch (err) {
+        console.error(err);
+        setActiveStage(-1);
+        resultDiv.textContent = `Ошибка: ${err.message}`;
       } finally {
         generateBtn.disabled = false;
       }
