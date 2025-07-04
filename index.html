@@ -11,7 +11,6 @@
 
     body {
       font-family: Arial, sans-serif;
-      /* затемнённый фон */
       background: 
         linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)),
         url('background.jpg') center/cover no-repeat;
@@ -100,13 +99,15 @@
   </div>
 
   <script>
-    // ===========================
-    // Настройки — замените ключи:
-    // ===========================
+    // ================
+    // Замените ключи:
+    // ================
     const GEMINI_API_KEY = 'AIzaSyBjCMFPAv1QX5ewcb0m08Pjh4Mdn6MV9i8';
     const SORA_API_KEY   = 'sk-bCREbtCgwOgFPHxdFd4c7a9910A140438507D1C51401827c';
-    const GEMINI_URL     = 'https://generativelanguage.googleapis.com/v1beta2/models/gemini-2.0-flash:generateText';
-    const SORA_URL       = 'https://api.laozhang.ai/v1/chat/completions';
+
+    // Правильный URL для Gemini 2.5 Flash
+    const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta2/models/gemini-2.5-flash:generateText';
+    const SORA_URL   = 'https://api.laozhang.ai/v1/chat/completions';
 
     const promptInput = document.getElementById('promptInput');
     const generateBtn = document.getElementById('generateBtn');
@@ -132,8 +133,8 @@
       }
     }
 
-    // 1. Получаем «прокачанный» промпт от Gemini
-    async function getBestPrompt(text) {
+    // 1. Получаем подробный промпт от Gemini
+    async function getBestPrompt(userText) {
       setActiveStage(0);
       const res = await fetchWithTimeout(
         `${GEMINI_URL}?key=${GEMINI_API_KEY}`,
@@ -144,9 +145,8 @@
             prompt: {
               text:
                 'Напиши очень подробный промпт для Sora без лишних слов. ' +
-                'Главная задача — сохранить идею и улучшить описание. ' +
-                'Ответ на английском языке.\n' +
-                text
+                'Сохранить идею, улучшив описание. Ответ — на английском.\n' +
+                userText
             }
           })
         }
@@ -159,7 +159,7 @@
       return json.candidates?.[0]?.output || '';
     }
 
-    // 2. Отправляем промпт в Sora и парсим URL картинки
+    // 2. Генерим картинку через Sora
     async function getImageFromSora(prompt) {
       setActiveStage(1);
       const res = await fetchWithTimeout(
@@ -186,28 +186,24 @@
       }
       const data = await res.json();
       const content = data.choices?.[0]?.message?.content || '';
-      // Ищем все URL в скобках
-      const urls = [];
-      for (const match of content.matchAll(/\((https?:\/\/[^\s)]+)\)/g)) {
-        urls.push(match[1]);
-      }
-      return urls;
+      return Array.from(content.matchAll(/\((https?:\/\/[^\s)]+)\)/g))
+                  .map(m => m[1]);
     }
 
     // Обработчик кнопки
     generateBtn.addEventListener('click', async () => {
-      const userText = promptInput.value.trim();
-      if (!userText) return;
+      const text = promptInput.value.trim();
+      if (!text) return;
 
       generateBtn.disabled = true;
       resultDiv.innerHTML = '';
       try {
-        const bestPrompt = await getBestPrompt(userText);
-        const imgs = await getImageFromSora(bestPrompt);
+        const bestPrompt = await getBestPrompt(text);
+        const urls       = await getImageFromSora(bestPrompt);
         setActiveStage(2);
 
-        if (imgs.length) {
-          imgs.forEach(src => {
+        if (urls.length) {
+          urls.forEach(src => {
             const img = document.createElement('img');
             img.src = src;
             resultDiv.appendChild(img);
