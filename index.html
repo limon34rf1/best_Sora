@@ -5,222 +5,93 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>Генератор изображений</title>
   <style>
-    /* Сброс стилей */
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-    html, body { height: 100%; }
-
+    * { margin:0; padding:0; box-sizing:border-box }
+    html,body { height:100% }
     body {
-      font-family: Arial, sans-serif;
-      background: 
-        linear-gradient(rgba(0,0,0,0.6), rgba(0,0,0,0.6)),
+      font-family:Arial,sans-serif;
+      background:
+        linear-gradient(rgba(0,0,0,0.6),rgba(0,0,0,0.6)),
         url('background.jpg') center/cover no-repeat;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      color: #fff;
+      display:flex; align-items:center; justify-content:center;
+      color:#fff;
     }
-
     .container {
-      background: rgba(0,0,0,0.5);
-      padding: 20px;
-      border-radius: 10px;
-      width: 90%;
-      max-width: 500px;
+      background:rgba(0,0,0,0.5);
+      padding:20px; border-radius:8px;
+      max-width:500px; width:90%;
     }
-
-    h1 { text-align: center; margin-bottom: 20px; }
-
+    h1 { text-align:center; margin-bottom:20px }
     input[type="text"] {
-      width: 100%;
-      padding: 10px;
-      border: none;
-      border-radius: 5px;
-      margin-bottom: 15px;
-      font-size: 16px;
+      width:100%; padding:10px; font-size:16px;
+      border:none; border-radius:4px; margin-bottom:15px;
     }
-
     button {
-      width: 100%;
-      padding: 10px;
-      border: none;
-      border-radius: 5px;
-      background: #0070f3;
-      color: #fff;
-      font-size: 16px;
-      cursor: pointer;
-      margin-bottom: 20px;
+      width:100%; padding:10px; font-size:16px;
+      border:none; border-radius:4px; background:#0070f3;
+      color:#fff; cursor:pointer; margin-bottom:20px;
     }
-
-    button:disabled {
-      background: #555;
-      cursor: not-allowed;
-    }
-
-    .stages {
-      display: flex;
-      justify-content: space-between;
-      margin-bottom: 20px;
-    }
-
+    button:disabled { background:#555; cursor:not-allowed }
+    .stages { display:flex; justify-content:space-between; margin-bottom:20px }
     .stage {
-      flex: 1;
-      text-align: center;
-      font-size: 14px;
-      opacity: 0.6;
+      flex:1; text-align:center; font-size:14px; opacity:0.6;
     }
-
-    .stage.active {
-      opacity: 1;
-      font-weight: bold;
-      color: #0f0;
-    }
-
-    .result img {
-      width: 100%;
-      border-radius: 5px;
-      margin-top: 10px;
-    }
+    .stage.active { opacity:1; color:#0f0; font-weight:bold }
+    .result img { width:100%; border-radius:4px; margin-top:10px }
+    .error { color:#f55; text-align:center }
   </style>
 </head>
 <body>
   <div class="container">
     <h1>Генератор изображений</h1>
-    <input id="promptInput" type="text" placeholder="Что рисуем сегодня?" />
-    <button id="generateBtn">Нарисовать</button>
+    <input id="prompt" type="text" placeholder="Что рисуем сегодня?" />
+    <button id="go">Нарисовать</button>
     <div class="stages">
-      <div id="stage0" class="stage">1. Промпт</div>
-      <div id="stage1" class="stage">2. Sora</div>
-      <div id="stage2" class="stage">3. Результат</div>
+      <div id="s0" class="stage">1. Промпт</div>
+      <div id="s1" class="stage">2. Sora</div>
+      <div id="s2" class="stage">3. Результат</div>
     </div>
-    <div class="result" id="result"></div>
+    <div id="out"></div>
   </div>
 
   <script>
-    // ================================
-    // Замените ваши ключи здесь:
-    // ================================
-    const GEMINI_API_KEY = 'AIzaSyBjCMFPAv1QX5ewcb0m08Pjh4Mdn6MV9i8';
-    const SORA_API_KEY   = 'sk-bCREbtCgwOgFPHxdFd4c7a9910A140438507D1C51401827c';
+    const btn   = document.getElementById('go');
+    const inpt  = document.getElementById('prompt');
+    const out   = document.getElementById('out');
+    const stages = [ 's0','s1','s2' ].map(id => document.getElementById(id));
 
-    // Правильный REST-эндпоинт для generateContent :contentReference[oaicite:0]{index=0}
-    const GEMINI_URL = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent';
-    const SORA_URL   = 'https://api.laozhang.ai/v1/chat/completions';
-
-    const promptInput = document.getElementById('promptInput');
-    const generateBtn = document.getElementById('generateBtn');
-    const resultDiv   = document.getElementById('result');
-    const stagesEls   = [
-      document.getElementById('stage0'),
-      document.getElementById('stage1'),
-      document.getElementById('stage2')
-    ];
-
-    function setActiveStage(idx) {
-      stagesEls.forEach((el, i) => el.classList.toggle('active', i === idx));
+    function setStage(i) {
+      stages.forEach((el, idx) => el.classList.toggle('active', idx===i));
     }
 
-    // fetch с таймаутом
-    async function fetchWithTimeout(url, options = {}, timeout = 30000) {
-      const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), timeout);
+    btn.addEventListener('click', async ()=>{
+      const text = inpt.value.trim();
+      if(!text) return;
+      btn.disabled = true; out.innerHTML='';
       try {
-        return await fetch(url, { ...options, signal: controller.signal });
-      } finally {
-        clearTimeout(id);
-      }
-    }
-
-    // 1. Получаем «прокачанный» промпт от Gemini через generateContent
-    async function getBestPrompt(userText) {
-      setActiveStage(0);
-      const payload = {
-        contents: [
-          {
-            parts: [
-              { text:
-                'Напиши очень подробный промпт для Sora без лишних слов. ' +
-                'Сохрани идею пользователя и улучшить описание. ' +
-                'Ответ — на английском.\n' + userText
-              }
-            ]
-          }
-        ]
-      };
-      const res = await fetchWithTimeout(GEMINI_URL, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-goog-api-key': GEMINI_API_KEY
-        },
-        body: JSON.stringify(payload)
-      });
-      if (!res.ok) {
-        const err = await res.text().catch(() => res.status);
-        throw new Error(`Gemini вернул ${res.status}: ${err}`);
-      }
-      const data = await res.json();
-      // Берём текст из первого кандидата
-      return data.candidates?.[0]?.content?.parts?.[0]?.text || '';
-    }
-
-    // 2. Генерируем картинку через Sora (аналогично, без изменений)
-    async function getImageFromSora(prompt) {
-      setActiveStage(1);
-      const res = await fetchWithTimeout(
-        SORA_URL,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${SORA_API_KEY}`
-          },
-          body: JSON.stringify({
-            model: 'sora-image',
-            stream: false,
-            messages: [
-              { role: 'system', content: 'You are a helpful assistant.' },
-              { role: 'user',   content: prompt }
-            ]
-          })
-        }
-      );
-      if (!res.ok) {
-        const err = await res.text().catch(() => res.status);
-        throw new Error(`Sora вернул ${res.status}: ${err}`);
-      }
-      const data = await res.json();
-      const content = data.choices?.[0]?.message?.content || '';
-      return Array.from(content.matchAll(/\((https?:\/\/[^\s)]+)\)/g))
-                  .map(m => m[1]);
-    }
-
-    // Обработчик кнопки
-    generateBtn.addEventListener('click', async () => {
-      const text = promptInput.value.trim();
-      if (!text) return;
-
-      generateBtn.disabled = true;
-      resultDiv.innerHTML = '';
-      try {
-        const bestPrompt = await getBestPrompt(text);
-        const urls       = await getImageFromSora(bestPrompt);
-        setActiveStage(2);
-
+        setStage(0);
+        const resp = await fetch('/api/generate', {
+          method:'POST',
+          headers:{'Content-Type':'application/json'},
+          body:JSON.stringify({ prompt: text })
+        });
+        const json = await resp.json();
+        if (!resp.ok) throw new Error(json.error || resp.status);
+        setStage(1);
+        const urls = json.urls || [];
+        setStage(2);
         if (urls.length) {
-          urls.forEach(src => {
+          urls.forEach(u=>{
             const img = document.createElement('img');
-            img.src = src;
-            resultDiv.appendChild(img);
+            img.src = u;
+            out.appendChild(img);
           });
         } else {
-          resultDiv.textContent = 'Картинка не найдена.';
+          out.innerHTML = '<div class="error">Картинка не найдена</div>';
         }
-      } catch (err) {
-        console.error(err);
-        setActiveStage(-1);
-        resultDiv.textContent = `Ошибка: ${err.message}`;
+      } catch(e) {
+        out.innerHTML = `<div class="error">Ошибка: ${e.message}</div>`;
       } finally {
-        generateBtn.disabled = false;
+        btn.disabled = false;
       }
     });
   </script>
